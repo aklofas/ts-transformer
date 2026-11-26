@@ -209,9 +209,10 @@ enum InFlight {
 /// or the PCR PID of the program carrying the video (learned from its
 /// `ProgramMap`). The strategy empties its history there, ahead of the
 /// passed-through event. A flag on any other PID, and a silent restart, are
-/// invisible: the caller flushes. The PCR PID counts only when that PID also
-/// carries an elementary stream; a PID that carries only PCR produces no
-/// demuxer event, so the caller flushes at such a restart.
+/// invisible: the caller flushes. The PCR PID counts whether or not it also
+/// carries an elementary stream: the demuxer reports a flag on a PID that
+/// carries only PCR too, so a restart signalled there starts an epoch like
+/// any other.
 ///
 /// A signalled discontinuity does not end the PES in flight on the KLV or
 /// video PID: it completes after the flag, on the old clock its header was
@@ -388,9 +389,10 @@ impl EpochTracker {
 /// A `ContinuityJump` (packet loss), a flag on any other PID, and an encoder
 /// restart that signals nothing (a silent clock jump) are not epochs; the
 /// last two are invisible to the pairer: call [`Self::flush`] at that
-/// boundary yourself. The video program's PCR PID counts only when that PID
-/// also carries an elementary stream; a PID that carries only PCR produces
-/// no demuxer event, so call [`Self::flush`] at such a restart.
+/// boundary yourself. The video program's PCR PID counts whether or not it
+/// also carries an elementary stream: a restart signalled on a PID that
+/// carries only PCR reaches the pairer as a demuxer event and starts an
+/// epoch like any other flag.
 ///
 /// # Closing
 ///
@@ -1013,6 +1015,186 @@ mod tests {
         let _ = p.feed(video_event_for_stats(0));
         p.reset_stats();
         assert_eq!(p.stats(), PairerStats::default());
+    }
+
+    /// The PID that carries only the PCR in the transport streams below.
+    const PCR_ONLY_PID: u16 = 0x1FFE;
+
+    /// One TS packet (H.222.0 §2.4.3.2) whose adaptation field (§2.4.3.4)
+    /// fills what `payload` leaves, with the discontinuity flag and a PCR in
+    /// 27 MHz units when given.
+    fn ts_packet(
+        pid: u16,
+        cc: u8,
+        pusi: bool,
+        flag: bool,
+        pcr: Option<u64>,
+        payload: &[u8],
+    ) -> [u8; 188] {
+        assert!(payload.len() <= 182, "leave room for the flags byte");
+        let mut p = [0xFFu8; 188];
+        p[0] = 0x47;
+        p[1] = (u8::from(pusi) << 6) | (pid >> 8) as u8;
+        p[2] = pid as u8;
+        p[3] = if payload.is_empty() { 0x20 } else { 0x30 } | (cc & 0x0F);
+        let af_len = 183 - payload.len();
+        p[4] = af_len as u8;
+        p[5] = if flag { 0x80 } else { 0 } | if pcr.is_some() { 0x10 } else { 0 };
+        if let Some(pcr) = pcr {
+            let (base, ext) = (pcr / 300, pcr % 300);
+            p[6..10].copy_from_slice(&((base >> 1) as u32).to_be_bytes());
+            p[10] = (((base & 1) as u8) << 7) | 0x7E | ((ext >> 8) as u8 & 1);
+            p[11] = ext as u8;
+        }
+        p[5 + af_len..].copy_from_slice(payload);
+        p
+    }
+
+    /// A PSI section (H.222.0 §2.4.4) with its CRC_32, alone in one packet.
+    fn section_packet(pid: u16, mut section: Vec<u8>) -> [u8; 188] {
+        let crc = tst_core::mpegts::common::crc32::crc32_mpeg2(&section);
+        section.extend_from_slice(&crc.to_be_bytes());
+        let mut pointer_and_section = vec![0];
+        pointer_and_section.extend_from_slice(&section);
+        ts_packet(pid, 0, true, false, None, &pointer_and_section)
+    }
+
+    /// PAT (program 1 on PMT PID 0x1000) and PMT: H.264 on `VIDEO_PID`, KLV
+    /// (stream type 0x06, registration `KLVA`) on `KLV_PID`, and
+    /// `PCR_ONLY_PID` as the `PCR_PID`, a PID that carries no stream.
+    fn pcr_only_psi() -> [[u8; 188]; 2] {
+        let pat = vec![
+            0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xF0, 0x00,
+        ];
+        let mut pmt = vec![0x02, 0xB0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00];
+        pmt.extend_from_slice(&(0xE000 | PCR_ONLY_PID).to_be_bytes());
+        pmt.extend_from_slice(&[0xF0, 0x00]);
+        pmt.extend_from_slice(&[
+            0x1B,
+            0xE0 | (VIDEO_PID >> 8) as u8,
+            VIDEO_PID as u8,
+            0xF0,
+            0x00,
+        ]);
+        pmt.extend_from_slice(&[0x06, 0xE0 | (KLV_PID >> 8) as u8, KLV_PID as u8, 0xF0, 0x06]);
+        pmt.extend_from_slice(&[0x05, 0x04, b'K', b'L', b'V', b'A']);
+        pmt[2] = (pmt.len() - 3 + 4) as u8;
+        [section_packet(0, pat), section_packet(0x1000, pmt)]
+    }
+
+    /// A bounded PES (H.222.0 §2.4.3.6) with a PTS, alone in one packet.
+    fn pes_packet(pid: u16, cc: u8, stream_id: u8, pts: u64, es: &[u8]) -> [u8; 188] {
+        let mut pes = vec![0x00, 0x00, 0x01, stream_id];
+        pes.extend_from_slice(&((8 + es.len()) as u16).to_be_bytes());
+        pes.extend_from_slice(&[0x84, 0x80, 0x05]);
+        pes.extend_from_slice(&[
+            0x21 | (((pts >> 30) as u8 & 0x07) << 1),
+            (pts >> 22) as u8,
+            0x01 | (((pts >> 15) as u8 & 0x7F) << 1),
+            (pts >> 7) as u8,
+            0x01 | ((pts as u8 & 0x7F) << 1),
+        ]);
+        pes.extend_from_slice(es);
+        ts_packet(pid, cc, true, false, None, &pes)
+    }
+
+    /// An H.264 access unit whose last byte is `tag`.
+    fn video_packet(cc: u8, pts: u64, tag: u8) -> [u8; 188] {
+        pes_packet(VIDEO_PID, cc, 0xE0, pts, &[0, 0, 0, 1, 0x65, 0x88, tag])
+    }
+
+    /// One KLV record (a 16-byte universal key, a one-byte length) whose
+    /// one-byte value is `tag`.
+    fn klv_packet(cc: u8, pts: u64, tag: u8) -> [u8; 188] {
+        let mut record = vec![
+            0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00,
+            0x00, 0x00, 0x01,
+        ];
+        record.push(tag);
+        pes_packet(KLV_PID, cc, 0xBD, pts, &record)
+    }
+
+    /// H.222.0 §2.4.3.5: a restart signalled on a PID that carries only the
+    /// PCR reaches the pairer through a real demuxer and starts an epoch, so
+    /// no new-clock frame pairs with old-clock KLV, although the new clock
+    /// lands within the tolerance of the old one.
+    #[test]
+    fn a_reset_signalled_on_a_pcr_only_pid_starts_an_epoch() {
+        const OLD: u8 = 0xA0;
+        const NEW: u8 = 0xB0;
+        let mut pkts = pcr_only_psi().to_vec();
+        pkts.push(ts_packet(
+            PCR_ONLY_PID,
+            0,
+            false,
+            false,
+            Some(100 * 27_000_000),
+            &[],
+        ));
+        pkts.push(klv_packet(0, 9_000_000, OLD));
+        pkts.push(video_packet(0, 9_000_000, OLD));
+        pkts.push(klv_packet(1, 9_003_000, OLD));
+        pkts.push(ts_packet(
+            PCR_ONLY_PID,
+            0,
+            false,
+            true,
+            Some(27_000_000),
+            &[],
+        ));
+        pkts.push(video_packet(1, 9_006_000, NEW));
+        pkts.push(klv_packet(2, 9_009_000, NEW));
+        pkts.push(klv_packet(3, 9_012_000, NEW));
+        pkts.push(video_packet(2, 9_012_000, NEW));
+        let mut d = PairingDemuxer::new(VIDEO_PID, KLV_PID);
+        let mut out = d.feed(pkts.as_flattened()).unwrap();
+        out.extend(d.flush());
+        let pairs: Vec<(u8, u8)> = out
+            .iter()
+            .filter_map(|o| match o {
+                PairerOutput::Paired { video, klv } => {
+                    Some((*video.raw.last().unwrap(), *klv.payload.last().unwrap()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pairs, [(OLD, OLD), (NEW, NEW)], "{out:?}");
+    }
+
+    /// The abuse case of the flag above: one on every packet of the PCR
+    /// PID. Each starts an epoch, and the pairer holds no more after 10 000
+    /// of them than after 10.
+    #[test]
+    fn ten_thousand_flags_on_a_pcr_only_pid_leave_the_pairer_bounded() {
+        let held_after = |flags: u64| {
+            let mut d = PairingDemuxer::new(VIDEO_PID, KLV_PID);
+            d.feed(pcr_only_psi().as_flattened()).unwrap();
+            let mut klv_out = 0;
+            for i in 0..flags {
+                let pkts = [
+                    klv_packet(i as u8, 90_000 + 3_000 * i, 0),
+                    ts_packet(PCR_ONLY_PID, 0, false, true, None, &[]),
+                ];
+                klv_out += d
+                    .feed(pkts.as_flattened())
+                    .unwrap()
+                    .iter()
+                    .filter(|o| matches!(o, PairerOutput::UnpairedKlv(_)))
+                    .count();
+            }
+            let held = d.flush().len();
+            assert_eq!(
+                klv_out + held,
+                flags as usize,
+                "every KLV sample leaves once"
+            );
+            assert_eq!(
+                d.demuxer_stats().per_stream[&PCR_ONLY_PID].discontinuities,
+                flags
+            );
+            held
+        };
+        assert_eq!(held_after(10_000), held_after(10));
     }
 }
 

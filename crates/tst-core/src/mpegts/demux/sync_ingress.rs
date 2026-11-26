@@ -74,13 +74,30 @@ impl super::demuxer::Demuxer {
     /// `program_number` is the program that declared `pid` as its
     /// `PCR_PID` (0 if none has).
     pub(super) fn pcr_stream_id(&self, pid: u16) -> StreamId {
-        self.lookup_stream(pid).unwrap_or_else(|| {
-            let program_number = self
-                .programs
-                .values()
-                .find(|t| t.pcr_pid == Some(pid))
-                .map_or(0, |t| t.program_number);
-            StreamId::anonymous(pid, program_number)
+        self.lookup_stream(pid)
+            .unwrap_or_else(|| StreamId::anonymous(pid, self.pcr_program_of(pid).unwrap_or(0)))
+    }
+
+    /// The lowest-numbered program that declares `pid` as its `PCR_PID`:
+    /// programs may share one, and the answer must not depend on the order
+    /// of the program map.
+    fn pcr_program_of(&self, pid: u16) -> Option<u16> {
+        self.programs
+            .values()
+            .filter(|t| t.pcr_pid == Some(pid))
+            .map(|t| t.program_number)
+            .min()
+    }
+
+    /// The identity a `discontinuity_indicator` on `pid` is reported under:
+    /// the stream the PID carries, or, for a PID that carries only some
+    /// program's PCR, the anonymous id `pcr_stream_id` gives it (H.222.0
+    /// §2.4.3.5: the flag there signals that program's new time base).
+    /// `None` for a PID no program declares.
+    fn flag_stream_id(&self, pid: u16, stream: Option<StreamId>) -> Option<StreamId> {
+        stream.or_else(|| {
+            self.pcr_program_of(pid)
+                .map(|program_number| StreamId::anonymous(pid, program_number))
         })
     }
 
@@ -281,7 +298,8 @@ impl super::demuxer::Demuxer {
                 state.clear_continuity();
                 state.source_reset_after_pes = true;
                 state.source_reset_in_pes = true;
-                if let Some(stream) = state.stream_id(pkt.pid) {
+                let stream = state.stream_id(pkt.pid);
+                if let Some(stream) = self.flag_stream_id(pkt.pid, stream) {
                     self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
                 }
             }
@@ -390,7 +408,7 @@ impl super::demuxer::Demuxer {
                 self.record_continuity_jump(stream, expected, pkt.continuity_counter);
             }
             if pkt.discontinuity_indicator
-                && let Some(stream) = stream
+                && let Some(stream) = self.flag_stream_id(pkt.pid, stream)
             {
                 self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
             }
@@ -464,6 +482,13 @@ fn pcr_masked_identical(a: &[u8; 188], b: &[u8; 188]) -> bool {
 mod tests {
     use super::super::demuxer::Demuxer;
     use crate::mpegts::common::pid;
+    use crate::mpegts::demux::test_support::{
+        PktSpec, build_pmt_section, demuxer_with_streams, drain_all_events,
+        pat_packet_with_programs, psi_packet, ts_packet,
+    };
+    use crate::mpegts::demux::{
+        DemuxEvent, DemuxerConfig, DiscontinuityKind, StreamId, StreamKind, VideoCodec,
+    };
 
     /// Build a payload-only TS packet on the given `pid` with CC=0.
     /// Mirrors `payload_packet_for_test` in `demuxer.rs` tests.
@@ -548,5 +573,135 @@ mod tests {
         let mut b = a;
         b[1] |= 0x40; // set payload_unit_start
         assert!(!super::pcr_masked_identical(&a, &b));
+    }
+
+    /// An adaptation-only packet on `pid` with `discontinuity_indicator` set.
+    fn flag_packet(pid: u16) -> [u8; 188] {
+        ts_packet(&PktSpec {
+            pid,
+            discontinuity: true,
+            ..Default::default()
+        })
+    }
+
+    /// The streams of the `AdaptationFieldFlag` events `pkts` raise, after
+    /// the events queued before them are dropped.
+    fn flag_streams(d: &mut Demuxer, pkts: &[[u8; 188]]) -> Vec<StreamId> {
+        drain_all_events(d);
+        for p in pkts {
+            d.feed_aligned(p).unwrap();
+        }
+        drain_all_events(d)
+            .into_iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Discontinuity {
+                    stream,
+                    kind: DiscontinuityKind::AdaptationFieldFlag,
+                } => Some(stream),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Program 1 with H.264 video on 0x100 and `pcr_pid` as its `PCR_PID`.
+    fn video_program(pcr_pid: u16) -> Demuxer {
+        demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            pcr_pid,
+            &[(0x1B, 0x100, &[])],
+        )
+    }
+
+    /// Programs 1 (video 0x100) and 2 (video 0x200) with the given
+    /// `PCR_PID`s, on PMT PIDs 0x1000 and 0x1001.
+    fn two_programs(pcr_1: u16, pcr_2: u16) -> Demuxer {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1001)], 0))
+            .unwrap();
+        for (program, pmt_pid, pcr_pid, es) in
+            [(1, 0x1000, pcr_1, 0x100), (2, 0x1001, pcr_2, 0x200)]
+        {
+            let section = build_pmt_section(program, pcr_pid, 0, &[], &[(0x1B, es, &[])]);
+            d.feed(&psi_packet(pmt_pid, &section, 0)).unwrap();
+        }
+        d
+    }
+
+    /// H.222.0 §2.4.3.5: the flag on a PID that carries only the program's
+    /// PCR signals a new time base. It is reported under the identity a
+    /// `PcrAnomaly` on that PID carries, and it opens a statistics entry
+    /// for the PID.
+    #[test]
+    fn a_flag_on_a_pcr_only_pid_is_reported() {
+        let mut d = video_program(0x1FFE);
+        assert_eq!(
+            flag_streams(&mut d, &[flag_packet(0x1FFE)]),
+            [StreamId::anonymous(0x1FFE, 1)]
+        );
+        let entry = &d.stats().per_stream[&0x1FFE];
+        assert_eq!(
+            (
+                entry.program_number,
+                entry.stream_type.as_byte(),
+                entry.items,
+                entry.discontinuities
+            ),
+            (1, 0, 0, 1)
+        );
+    }
+
+    /// Which flagged packets report a `Discontinuity`: a packet on a stream
+    /// PID as before, one on a PID that carries only a program's PCR, and
+    /// no other.
+    #[test]
+    fn which_flagged_packets_report() {
+        let pcr_only = StreamId::anonymous(0x1FFE, 1);
+        // A PID no program declares.
+        assert!(flag_streams(&mut video_program(0x1FFE), &[flag_packet(0x0200)]).is_empty());
+        // A null packet under a PMT that names 0x1FFF ("no PCR").
+        assert!(flag_streams(&mut video_program(pid::NULL), &[flag_packet(pid::NULL)]).is_empty());
+        // Each flagged adaptation-only packet on a PCR-only PID reports.
+        assert_eq!(
+            flag_streams(&mut video_program(0x1FFE), &[flag_packet(0x1FFE); 3]),
+            [pcr_only; 3]
+        );
+        // A flagged packet with a payload and its spec duplicate
+        // (H.222.0 §2.4.3.3) report once.
+        let with_payload = ts_packet(&PktSpec {
+            pid: 0x1FFE,
+            discontinuity: true,
+            payload: &[0xAB; 20],
+            ..Default::default()
+        });
+        assert_eq!(
+            flag_streams(&mut video_program(0x1FFE), &[with_payload, with_payload]),
+            [pcr_only]
+        );
+        // A PCR PID two programs declare: one report, under the
+        // lowest-numbered program, whatever the order of the program map.
+        assert_eq!(
+            flag_streams(&mut two_programs(0x1FFE, 0x1FFE), &[flag_packet(0x1FFE)]),
+            [pcr_only]
+        );
+        // A PCR carried on the program's PMT PID.
+        assert_eq!(
+            flag_streams(&mut video_program(0x1000), &[flag_packet(0x1000)]),
+            [StreamId::anonymous(0x1000, 1)]
+        );
+        // A stream PID reports under its stream, as before, also when it is
+        // another program's PCR PID.
+        let video = |pid, program_number| StreamId {
+            pid,
+            kind: StreamKind::Video(VideoCodec::H264),
+            program_number,
+        };
+        assert_eq!(
+            flag_streams(&mut video_program(0x1FFE), &[flag_packet(0x100)]),
+            [video(0x100, 1)]
+        );
+        assert_eq!(
+            flag_streams(&mut two_programs(0x200, 0x200), &[flag_packet(0x200)]),
+            [video(0x200, 2)]
+        );
     }
 }
