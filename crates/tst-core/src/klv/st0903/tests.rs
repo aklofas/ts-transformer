@@ -1566,19 +1566,96 @@ fn vtarget_strict_refuses_out_of_range_u8_values() {
 }
 
 #[test]
-fn vmti_specials_decode_without_error_and_unset() {
+fn vmti_specials_unset_their_field_and_a_lenient_decode_lists_them() {
     // ST 0903.6 §9.1.1: IMAP_ABOVE_MAXIMUM is sent in place of the
-    // measurement, and 0xC1 padded to the item's length is "Invalid".
+    // measurement, and 0xC1 padded to the item's length is "Invalid": legal
+    // values, so strict decode accepts them. The lenient decode lists each
+    // one with its item's tag and range, since no encoder writes it back.
     let pack = [0x01, 0x0C, 0x02, 0xE1, 0x00, 0x0D, 0x03, 0xC1, 0x00, 0x00];
     let mut bytes = with_packs(&[&pack]);
     bytes.extend_from_slice(&[0x0B, 0x02, 0xE1, 0x00]);
-    for ls in [decode(&bytes).unwrap(), decode_strict(&bytes).unwrap()] {
+    let (lenient, strict) = (decode(&bytes).unwrap(), decode_strict(&bytes).unwrap());
+    for ls in [&lenient, &strict] {
         assert_eq!(ls.horizontal_fov, None);
-        assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
         let t = &ls.targets[0];
         assert_eq!(t.centroid_hae, None);
         assert_eq!(t.bbox_top_left_lat_offset, None);
-        assert!(t.field_errors.is_empty(), "{:?}", t.field_errors);
+    }
+    assert!(strict.field_errors.is_empty() && strict.targets[0].field_errors.is_empty());
+    assert_eq!(
+        lenient.field_errors,
+        [KlvFieldError::OutOfRange {
+            tag: 11,
+            value: f64::INFINITY,
+            min: 0.0,
+            max: 180.0
+        }]
+    );
+    let listed = &lenient.targets[0].field_errors;
+    assert_eq!(
+        listed[0],
+        KlvFieldError::OutOfRange {
+            tag: 12,
+            value: f64::INFINITY,
+            min: -900.0,
+            max: 19000.0
+        }
+    );
+    assert!(
+        matches!(listed[1], KlvFieldError::OutOfRange { tag: 13, value, min, max }
+            if value.is_nan() && min == -19.2 && max == 19.2),
+        "{listed:?}"
+    );
+    assert_eq!(listed.len(), 2);
+}
+
+#[test]
+fn a_relayed_special_is_listed_and_not_written_back() {
+    // targetHae = IMAP_ABOVE_MAXIMUM in a pack that also holds a confidence
+    // level: the decoded record has no field for it, so the encoder writes a
+    // shorter set, and only `field_errors` says an item was there.
+    let bytes = [
+        0x04, 0x01, 0x05, 0x06, 0x01, 0x01, 0x65, 0x09, 0x08, 0x01, 0x05, 0x01, 0x32, 0x0C, 0x02,
+        0xE1, 0x00,
+    ];
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls.targets[0].centroid_hae, None);
+    assert!(
+        matches!(
+            ls.targets[0].field_errors[..],
+            [KlvFieldError::OutOfRange { tag: 12, .. }]
+        ),
+        "{:?}",
+        ls.targets[0].field_errors
+    );
+    let relayed = encode_to_vec(&ls).unwrap();
+    assert_eq!(relayed.len(), bytes.len() - 4);
+    let again = decode(&relayed).unwrap();
+    assert_eq!(again, ls);
+    assert!(again.targets[0].field_errors.is_empty());
+}
+
+#[test]
+fn a_listed_special_says_which_side_of_the_range_it_signals() {
+    // Below minimum and negative infinity, above maximum and positive
+    // infinity, and no side for a NaN or the "Invalid" signal.
+    for (first, sign) in [
+        (0xE0u8, Some(f64::NEG_INFINITY)),
+        (0xE8, Some(f64::NEG_INFINITY)),
+        (0xE1, Some(f64::INFINITY)),
+        (0xC8, Some(f64::INFINITY)),
+        (0xD0, None),
+        (0xC1, None),
+    ] {
+        let ls = decode(&[0x0C, 0x02, first, 0x00]).unwrap();
+        assert_eq!(ls.vertical_fov, None);
+        let [KlvFieldError::OutOfRange { tag: 12, value, .. }] = ls.field_errors[..] else {
+            panic!("{first:#04x}: {:?}", ls.field_errors);
+        };
+        match sign {
+            Some(side) => assert_eq!(value, side, "{first:#04x}"),
+            None => assert!(value.is_nan(), "{first:#04x}"),
+        }
     }
 }
 

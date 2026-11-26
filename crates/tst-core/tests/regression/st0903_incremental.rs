@@ -137,15 +137,15 @@ fn st0903_10_1_11_horizontal_fov_180_deg_boundary() {
 //
 // ST 0903.6 §9.1.1 sends an ST 1201 special value (an out-of-range
 // signal, "Invalid") in place of the measurement: the lenient ST 0903
-// walker (`klv::st0903::decode::decode`) leaves the field unset with no
-// field error. A pattern outside the special-value space that decodes
-// past the range is still a field error. Tests below pin both for the
+// walker (`klv::st0903::decode::decode`) leaves the field unset and lists
+// the item in `field_errors` (no encoder writes it back). A pattern outside
+// the special-value space that decodes past the range is a field error. Tests below pin both for the
 // FOV tags (the only top-level IMAPB tags in the VMTI LS).
 
 /// Inject a hand-built §7.2.3 Table 2 BelowMin signal (byte0=0xE0)
 /// into Tag 11 (`horizontal_fov`). The lenient walker leaves
-/// `horizontal_fov` unset (it cannot synthesize a concrete f64) and
-/// records no error: the signal is a legal value.
+/// `horizontal_fov` unset (it cannot synthesize a concrete f64) and lists
+/// the item: the signal is a legal value that no encoder writes back.
 #[test]
 fn st0903_lenient_walker_treats_below_min_signal_as_unset() {
     // Hand-build a minimal embedded-VMTI body with Tag 11 carrying
@@ -157,10 +157,14 @@ fn st0903_lenient_walker_treats_below_min_signal_as_unset() {
         decoded.horizontal_fov, None,
         "BelowMin signal must not synthesize a concrete f64"
     );
-    assert!(
-        decoded.field_errors.is_empty(),
-        "a special is a legal value, got {:?}",
-        decoded.field_errors
+    assert_eq!(
+        decoded.field_errors,
+        [KlvFieldError::OutOfRange {
+            tag: 11,
+            value: f64::NEG_INFINITY,
+            min: 0.0,
+            max: 180.0
+        }]
     );
 }
 
@@ -171,10 +175,14 @@ fn st0903_lenient_walker_treats_positive_infinity_signal_as_unset() {
     let body = [0x0C, 0x02, 0xC8, 0x00];
     let decoded = st0903::decode(&body).unwrap();
     assert_eq!(decoded.vertical_fov, None);
-    assert!(
-        decoded.field_errors.is_empty(),
-        "a special is a legal value, got {:?}",
-        decoded.field_errors
+    assert_eq!(
+        decoded.field_errors,
+        [KlvFieldError::OutOfRange {
+            tag: 12,
+            value: f64::INFINITY,
+            min: 0.0,
+            max: 180.0
+        }]
     );
 }
 

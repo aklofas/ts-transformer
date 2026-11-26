@@ -38,6 +38,36 @@ use core::ops::Range;
 /// Use [`decode_strict`] for spec-validation use cases that
 /// reject any of the above.
 ///
+/// # What a decoded set no longer carries
+///
+/// The encoders write the fields that are set and the `unknown` items. A
+/// relay that decodes a set and encodes the record therefore does not
+/// forward:
+/// - An item sent as an ST 1201 special (ST 0903.6 §9.1.1: a signal such as
+///   "above maximum" or "Invalid" in place of the measurement; Items 11 and
+///   12, and Items 10 to 16 of a VTarget pack). It is a legal value: its
+///   field is left unset, and the item is listed in `field_errors` as
+///   [`KlvFieldError::OutOfRange`] with its tag and range, the value being
+///   negative infinity for "below minimum" and −∞, positive infinity for
+///   "above maximum" and +∞, and NaN for every other special. The ST 0601
+///   record keeps its specials in a list and writes them back; the VMTI
+///   records have no such list.
+/// - An item that does not decode (a wrong length, text that is not UTF-8,
+///   a reserved IMAPB pattern): its field is unset beside its entry in
+///   `field_errors`. A name over its character cap is listed too, but kept.
+/// - What leaves no entry: a zero-length item of a defined tag, every
+///   occurrence of a repeated defined tag but the last, an unknown tag wider
+///   than 32 bits, and the checksum as it was sent (the embedded encoders
+///   omit the item, the standalone ones compute their own).
+/// - Everything from a framing error on: the rest of the set
+///   (`TruncatedField` with tag 0), or the pack it is in or the rest of the
+///   series (`TruncatedField` with tag 101).
+///
+/// An entry for a pack's item is in that pack's
+/// [`VTargetPack::field_errors`](crate::klv::st0903::VTargetPack::field_errors),
+/// the others in [`VmtiLs::field_errors`]. A relay that must forward such a
+/// set unchanged forwards the bytes it received.
+///
 /// # Errors
 /// Returns `Err(KlvDecodeError)` only for unrecoverable framing
 /// failures inside [`VTargetSeries`][VmtiLs::targets] (Tag 101) — a
@@ -239,11 +269,16 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 };
                 // ST 0903.6 §9.1.1: an ST 1201 special (an out-of-range
                 // signal, "Invalid") is sent in place of the measurement:
-                // a legal value that leaves the field unset. A reserved
-                // pattern or an out-of-range result is a field error.
+                // a legal value that leaves the field unset. No encoder
+                // writes it back, so it is listed. A reserved pattern or an
+                // out-of-range result is a field error.
                 let v = match decode_imapb(&params, value) {
                     Ok(DecodedImapb::Value(v)) => Some(v),
-                    Ok(DecodedImapb::Special(_)) => None,
+                    Ok(DecodedImapb::Special(special)) => {
+                        ls.field_errors
+                            .push(special_field_error(tag as u32, special, min, max));
+                        None
+                    }
                     _ => {
                         reject(
                             &mut ls,
@@ -285,6 +320,31 @@ fn string_item(s: &str) -> String {
         String::new()
     } else {
         s.to_string()
+    }
+}
+
+/// What a lenient decode lists for the item `tag` sent as an ST 1201 special
+/// (ST 0903.6 §9.1.1): no value in the item's range `min` to `max`. The
+/// `value` tells which side the special signals: negative infinity for
+/// "below minimum" and −∞, positive infinity for "above maximum" and +∞,
+/// NaN for every other special ("Invalid" among them).
+pub(super) fn special_field_error(
+    tag: u32,
+    special: crate::klv::imapb::ImapbSpecial,
+    min: f64,
+    max: f64,
+) -> KlvFieldError {
+    use crate::klv::imapb::ImapbSpecial;
+    let value = match special {
+        ImapbSpecial::BelowMin | ImapbSpecial::NegativeInfinity => f64::NEG_INFINITY,
+        ImapbSpecial::AboveMax | ImapbSpecial::PositiveInfinity => f64::INFINITY,
+        _ => f64::NAN,
+    };
+    KlvFieldError::OutOfRange {
+        tag,
+        value,
+        min,
+        max,
     }
 }
 
@@ -396,7 +456,9 @@ fn decode_vtarget_series(
 /// strict encoders can refuse a record this function accepted, when a
 /// special was the only value of a mandatory item, or such items were all
 /// a pack held (`MissingMandatoryItem`, `VTargetPackEmpty`): a relay
-/// forwards the original bytes.
+/// forwards the original bytes. A special is a legal value (ST 0903.6
+/// §9.1.1), so it is accepted, and this function fills no `field_errors`:
+/// only [`decode`] lists the items sent so, which no encoder writes back.
 ///
 /// Unknown tags are still preserved in [`VmtiLs::unknown`] per
 /// ST 0107.5 §6 future-proof skip rule (strict mode is about

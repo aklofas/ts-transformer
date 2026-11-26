@@ -376,21 +376,35 @@ crate::binding_record! {
         pub target_intensity: Option<u32>,
         /// Tag 10 `targetLocationOffsetLat` per §10.2.2.11 —
         /// IMAPB(-19.2°, 19.2°, 3 bytes).
+        ///
+        /// An item sent as an ST 1201 special (ST 0903.6 §9.1.1: "below
+        /// minimum", "above maximum", "Invalid") is legal and leaves this
+        /// field unset. The lenient decode lists it in
+        /// [`Self::field_errors`]; the encoders write only a set field, so
+        /// they do not write the special back (the ST 0601 record keeps a
+        /// list for that; this one has none). The same holds for Tags 11
+        /// to 16.
         pub centroid_lat_offset: Option<f64>,
         /// Tag 11 `targetLocationOffsetLon` per §10.2.2.12 — IMAPB(-19.2°, 19.2°, 3).
+        /// Unset for a special, see [`Self::centroid_lat_offset`].
         pub centroid_lon_offset: Option<f64>,
         /// Tag 12 `targetHae` per §10.2.2.13 — IMAPB(-900 m, 19000 m, 2).
+        /// Unset for a special, see [`Self::centroid_lat_offset`].
         pub centroid_hae: Option<f64>,
         /// Tag 13 `boundingBoxTopLeftLatOffset` per §10.2.2.14 —
         /// IMAPB(-19.2°, 19.2°, 3).
+        /// Unset for a special, see [`Self::centroid_lat_offset`].
         pub bbox_top_left_lat_offset: Option<f64>,
         /// Tag 14 `boundingBoxTopLeftLonOffset` per §10.2.2.15 — IMAPB(-19.2°, 19.2°, 3).
+        /// Unset for a special, see [`Self::centroid_lat_offset`].
         pub bbox_top_left_lon_offset: Option<f64>,
         /// Tag 15 `boundingBoxBottomRightLatOffset` per §10.2.2.16 —
         /// IMAPB(-19.2°, 19.2°, 3).
+        /// Unset for a special, see [`Self::centroid_lat_offset`].
         pub bbox_bottom_right_lat_offset: Option<f64>,
         /// Tag 16 `boundingBoxBottomRightLonOffset` per §10.2.2.17 —
         /// IMAPB(-19.2°, 19.2°, 3).
+        /// Unset for a special, see [`Self::centroid_lat_offset`].
         pub bbox_bottom_right_lon_offset: Option<f64>,
         /// Tag 17 `targetLocation` per §10.2.2.18 — Defined Length
         /// Truncation Pack pass-through bytes (typed inner deferred).
@@ -437,9 +451,13 @@ crate::binding_record! {
         /// additions). Preserved per ST 0107.5 §6 future-proof skip rule.
         @[custom]
         pub unknown: Vec<crate::klv::pack::OwnedRawField>,
-        /// Per-field validation errors (e.g. malformed IMAPB) accumulated
-        /// during lenient decode. The other typed sets collect the same
-        /// diagnostic in their own `field_errors`.
+        /// What the lenient decode met in this pack's items and no encoder
+        /// writes back: an item that does not decode (a wrong length, a
+        /// reserved IMAPB pattern), and an item sent as an ST 1201 special,
+        /// a legal value listed as `OutOfRange` with its tag and range (the
+        /// value is negative or positive infinity for the side the special
+        /// signals, NaN otherwise). The field of each is unset. Strict
+        /// decode leaves the list empty; the encoders do not read it.
         @[custom]
         pub field_errors: Vec<crate::error::KlvFieldError>,
     }

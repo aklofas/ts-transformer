@@ -2,6 +2,7 @@
 
 use super::model::{PackEncoding, VTargetPack, VTargetPackError, pack_lookup};
 use crate::error::KlvFieldError;
+use crate::klv::st0903::decode::special_field_error;
 
 /// Decode a single VTargetPack from `bytes`. Returns the decoded pack
 /// and the number of bytes consumed.
@@ -21,6 +22,12 @@ use crate::error::KlvFieldError;
 /// A zero-length item means "unknown" (ST 0107.4-17), as at the top level:
 /// its field is unset, with no field error. No pack item is mandatory
 /// (ST 0903.6 §10.2), so the strict reader accepts it too.
+///
+/// An IMAPB item (10 to 16) sent as an ST 1201 special (ST 0903.6 §9.1.1)
+/// is legal: its field is unset, and this reader lists the item in
+/// `pack.field_errors` (`OutOfRange` with its tag and range), because
+/// [`super::write_pack`] writes only set fields and so does not write it
+/// back.
 pub(crate) fn read_pack(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPackError> {
     read_pack_inner(bytes, /* strict = */ false)
 }
@@ -274,7 +281,16 @@ fn decode_field(
                 .map_err(|_| VTargetPackError::MalformedImapb { tag })?
             {
                 DecodedImapb::Value(v) => Some(v),
-                DecodedImapb::Special(_) => None,
+                DecodedImapb::Special(special) => {
+                    // No encoder writes the special back, so the lenient
+                    // reader lists the item; the strict one has nothing to
+                    // refuse and fills no `field_errors`.
+                    if !strict {
+                        pack.field_errors
+                            .push(special_field_error(tag, special, min, max));
+                    }
+                    None
+                }
                 _ => return Err(VTargetPackError::MalformedImapb { tag }),
             };
             match tag_u8 {

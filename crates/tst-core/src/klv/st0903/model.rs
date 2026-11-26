@@ -50,13 +50,31 @@ crate::binding_record! {
         pub frame_width: Option<u32>,
         pub frame_height: Option<u32>,
         pub source_sensor: Option<String>,
+        /// Tag 11 `vmtiHorizontalFov` per ST 0903.6 §10.1.11, in degrees
+        /// (IMAPB(0, 180, 2)).
+        ///
+        /// An item sent as an ST 1201 special (ST 0903.6 §9.1.1: "below
+        /// minimum", "above maximum", "Invalid") is legal and leaves this
+        /// field unset. The lenient decode lists it in `field_errors`; the
+        /// encoders write only a set field, so they do not write the special
+        /// back (the ST 0601 record keeps a list for that; this one has
+        /// none).
         pub horizontal_fov: Option<f64>,
+        /// Tag 12 `vmtiVerticalFov` per ST 0903.6 §10.1.12, in degrees
+        /// (IMAPB(0, 180, 2)). Unset for a special, as `horizontal_fov`.
         pub vertical_fov: Option<f64>,
         pub miis_id: Option<Vec<u8>>,
         pub targets: Vec<VTargetPack>,
         pub algorithm_series: Option<Vec<u8>>,
         pub ontology_series: Option<Vec<u8>>,
         @[custom] pub unknown: Vec<OwnedRawField>,
+        /// What the lenient decode met in the top-level items and no encoder
+        /// writes back: an item that does not decode, an item sent as an
+        /// ST 1201 special (a legal value, listed as `OutOfRange` with its
+        /// tag and range), a framing error (tag 0, or tag 101 inside the
+        /// series). A pack's own items are listed in that pack's
+        /// `field_errors`. Strict decode leaves the list empty; the
+        /// encoders do not read it.
         @[custom] pub field_errors: Vec<KlvFieldError>,
     }
 }
