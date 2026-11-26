@@ -43,6 +43,15 @@ impl<'a> BitReader<'a> {
         }
     }
 
+    /// A reader over bytes that hold no emulation-prevention bytes: a `03`
+    /// after `00 00` is data.
+    pub(crate) fn new_unescaped(bytes: &'a [u8]) -> Self {
+        Self {
+            escaped: false,
+            ..Self::new(bytes)
+        }
+    }
+
     #[cfg(test)]
     fn at_bit_for_test(bytes: &'a [u8], bit_pos: u64) -> Self {
         Self {
@@ -194,6 +203,13 @@ mod tests {
             }) => assert_eq!(offset_bits, u32::MAX),
             other => panic!("expected a saturated TruncatedRbsp, got {other:?}"),
         }
+    }
+
+    /// An unescaped reader takes a `03` after `00 00` as data.
+    #[test]
+    fn unescaped_reader_reads_03_as_data() {
+        let mut br = BitReader::new_unescaped(&[0x00, 0x00, 0x03]);
+        assert_eq!(br.read_u(24).unwrap(), 0x00_00_03);
     }
 
     #[test]

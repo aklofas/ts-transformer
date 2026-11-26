@@ -151,19 +151,14 @@ fn make_sps_rbsp_with_vui(vui_payload_size_minus1: u32, write_epilogue: bool) ->
 }
 
 /// Regression: crafted `vui_payload_size_minus1 = 0x1FFF_FFFF` (536870911)
-/// causes `8 * (vui_payload_size_minus1 + 1) as u32 = 8 * 2^29 = 2^32`,
-/// overflowing u32. The parser must return Err without panicking.
-///
-/// The fix computes `vui_end_bits` in u64 (panic-free) and then explicitly
-/// rejects an end past `u32::MAX` with `ReservedValue` — the loop below
-/// compares against a u32 `position()`, so such an end is unreachable in a
-/// valid bitstream. This asserts that *reachable* `ReservedValue` branch
-/// fires (it was dead code when guarded only by `checked_mul`/`checked_add`,
-/// neither of which can overflow u64 given the bounded operands).
+/// once overflowed the u32 end-of-payload arithmetic
+/// (`8 * (vui_payload_size_minus1 + 1) = 2^32`). The parser must return
+/// `Err` without panicking: the size is above the 1023 that H.266 §7.4.3.4
+/// allows, so it is refused as `ReservedValue` before any payload byte is
+/// read.
 #[test]
 fn vui_giant_payload_size_does_not_panic() {
-    // 0x1FFF_FFFF: payload_size_bytes = 0x2000_0000, 8 * that = 2^32 → vui_end_bits
-    // exceeds u32::MAX, so the explicit bound check returns ReservedValue.
+    // 0x1FFF_FFFF is above 1023: refused before the payload is read.
     let rbsp = make_sps_rbsp_with_vui(0x1FFF_FFFF, false);
     let result = parse_sps(&rbsp);
     assert!(

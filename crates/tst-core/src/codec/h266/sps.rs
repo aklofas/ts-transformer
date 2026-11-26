@@ -91,6 +91,14 @@ impl H266Sps {
 /// reference-encoder defaults and would require walking large per-tile
 /// or per-coefficient blocks not modeled here. Same conservative stance
 /// as `codec::h265::parse_sps`.
+///
+/// The VUI is parsed inside its declared `sps_vui_payload_size_minus1 + 1`
+/// RBSP bytes (H.266 §7.3.2.21). A size above 1023, a non-zero
+/// `sps_vui_alignment_zero_bit` and a tail without its
+/// `vui_payload_bit_equal_to_one` are refused as `ReservedValue`; a VUI that
+/// needs more bits than its payload holds is `TruncatedRbsp`. An error raised
+/// inside the VUI reports `offset_bits` from the start of the VUI payload,
+/// not of the SPS.
 pub fn parse_sps(rbsp: &[u8]) -> Result<H266Sps, CodecParseError> {
     if rbsp.is_empty() {
         return Err(CodecParseError::TruncatedRbsp {
@@ -550,44 +558,41 @@ fn walk_sps_body(
     // §7.3.2.4 — VUI parameters. VUI carries color_info in H.266; timing
     // lives in general_timing_hrd_parameters() above (§7.3.5.1).
     let color_info = if sps_vui_parameters_present_flag {
-        let vui_payload_size_minus1 = br.read_ue()? as usize;
-        let payload_size_bytes = vui_payload_size_minus1 + 1;
-        // §7.3.2.4: "while( !byte_aligned() ) sps_vui_alignment_zero_bit f(1)"
-        // Consume zero-padding bits to reach the next byte boundary before VUI.
+        // §7.4.3.4: the size counts RBSP bytes and shall be in 0..=1023.
+        let size_minus1 = br.read_ue_max("vui_payload_size_minus1", 1023)?;
+        // §7.3.2.4: while( !byte_aligned() ) sps_vui_alignment_zero_bit f(1).
         while !br.position().is_multiple_of(8) {
-            br.read_u(1)?;
+            if br.read_bool()? {
+                return Err(CodecParseError::ReservedValue {
+                    field: "sps_vui_alignment_zero_bit",
+                    value: 1,
+                });
+            }
         }
-        // §7.3.2.21 vui_payload(payloadSize) reserves exactly 8 * payloadSize
-        // bits. `vui_parameters()` (H.274 §7.2) may not consume all of them —
-        // the wrapper allows `vui_reserved_payload_extension_data` + marker +
-        // zero-pad tail. Snapshot the start position so we can advance the
-        // cursor to the declared payload end before reading sps_extension_flag.
-        let vui_start_bits = br.position();
-        let color = parse_h266_vui(br)?;
-        // Compute the VUI end boundary in u64 to avoid u32 overflow on a
-        // crafted `vui_payload_size_minus1` ≥ 0x1FFF_FFFF (DoS via debug
-        // panic). `vui_payload_size_minus1` comes from `read_ue()` so it is at
-        // most `u32::MAX`; `(payload_size_bytes * 8) + vui_start_bits` therefore
-        // peaks near 0x8_FFFF_FFFF and can never overflow u64 — the u64 math
-        // itself is panic-free without any checked-arithmetic guard.
-        //
-        // What *can* happen is a crafted payload whose declared end lands beyond
-        // u32::MAX bits. The tail-skip loop below compares against `br.position()`
-        // (a u32), so such an end is unreachable in a valid bitstream — reject it
-        // with ReservedValue rather than spinning the loop to EOF.
-        let vui_end_bits: u64 = vui_start_bits + (payload_size_bytes as u64) * 8;
-        if vui_end_bits > u32::MAX as u64 {
+        // Take exactly the declared RBSP bytes (the SPS reader drops
+        // emulation-prevention bytes), then parse the VUI inside them only, so
+        // it cannot read past its size.
+        let mut payload = Vec::with_capacity(size_minus1 as usize + 1);
+        for _ in 0..=size_minus1 {
+            payload.push(br.read_u(8)? as u8);
+        }
+        let mut vui_br = BitReader::new_unescaped(&payload);
+        let color = parse_h266_vui(&mut vui_br)?;
+        // §7.3.2.21: bits left after vui_parameters() (H.274 §7.2) end in
+        // vui_payload_bit_equal_to_one and at most seven zero bits, so the
+        // marker lies in the last byte, among its unread bits. A VUI that
+        // uses every payload bit has no tail and no marker.
+        let unread = 8 * payload.len() as u64 - vui_br.position();
+        let mask: u8 = if unread >= 8 {
+            0xFF
+        } else {
+            (1u8 << unread) - 1
+        };
+        if unread > 0 && payload.last().is_some_and(|&b| b & mask == 0) {
             return Err(CodecParseError::ReservedValue {
-                field: "vui_payload_size_minus1",
-                value: vui_payload_size_minus1 as u32,
+                field: "vui_payload_bit_equal_to_one",
+                value: 0,
             });
-        }
-        while br.position() < vui_end_bits {
-            // Consume the optional extension+marker+pad tail. We do not
-            // interpret the bits — H.266 §7.3.2.21 reserves them for future
-            // use and §7.4.2.21's `more_data_in_payload()` test allows
-            // benign extension data here.
-            br.read_u(1)?;
         }
         color
     } else {

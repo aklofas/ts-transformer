@@ -2,7 +2,10 @@
 
 use crate::codec::h266::parse_sps;
 use crate::codec::test_util::{BitWriter, escape_emulation};
-use crate::codec::{ChromaFormat, CodecParseError, Rational};
+use crate::codec::{
+    ChromaFormat, CodecParseError, ColorInfo, ColourPrimaries, MatrixCoefficients, Rational,
+    TransferCharacteristics,
+};
 use crate::test_prelude::*;
 
 /// Construct a minimal valid H.266 SPS bitstream:
@@ -25,21 +28,6 @@ fn minimal_sps_rbsp_with_bitdepth_minus8(bitdepth_minus8: u32) -> Vec<u8> {
 /// so the surfaced `crop_*` luma-sample values are 2× the offsets.
 fn minimal_sps_rbsp_with_conformance_window(offsets: (u32, u32, u32, u32)) -> Vec<u8> {
     minimal_sps_rbsp_full(0, Some(offsets), 0)
-}
-
-/// Same minimal SPS but with `sps_vui_parameters_present_flag = 1` and
-/// the declared `vui_payload(payloadSize)` region sized 1 byte larger
-/// than the actual `vui_parameters()` body (which is 8 bits for an
-/// all-zero-flags VUI). The extra byte is `0xFF` to expose any
-/// mis-framing: a parser that fails to advance past the declared payload
-/// size will read the wrong `sps_extension_flag` bit and corrupt the
-/// trailing-bits check.
-///
-/// Mirrors H.266 V4 §7.3.2.21 — `vui_payload(payloadSize)` reserves the
-/// entire `8 * payloadSize` bit region; encoders MAY emit
-/// `vui_reserved_payload_extension_data` + marker + pad in the tail.
-fn minimal_sps_rbsp_with_vui_tail_padding() -> Vec<u8> {
-    minimal_sps_rbsp_full(0, None, 1)
 }
 
 fn minimal_sps_rbsp_full(
@@ -458,37 +446,6 @@ fn real_vvenc_sps_recovers_frame_rate_via_timing_hrd() {
     );
 }
 
-/// Smoke test for H.266 V4 §7.3.2.21 — `vui_payload(payloadSize)`
-/// reserves exactly `8 * payloadSize` bits; `vui_parameters()`
-/// (H.274 §7.2) may not consume all of them, and the SPS caller
-/// must advance the cursor to the declared payload end before
-/// reading `sps_extension_flag`.
-///
-/// This test builds an SPS with a 2-byte declared VUI region but a
-/// 1-byte actual `vui_parameters()` body. The trailing byte is
-/// `0xFF` to expose any mis-framing: post-fix, the parser skips
-/// the padding and reads `sps_extension_flag = 0` correctly;
-/// pre-fix, the parser reads bit 0 of `0xFF` as `sps_extension_flag = 1`.
-///
-/// **Note:** The bug isn't directly observable as `Err` vs `Ok` —
-/// `sps_extension_flag` isn't surfaced on `H266Sps`, and the parser
-/// doesn't validate `rbsp_trailing_bits`. The test functions as
-/// a structural smoke test ensuring the new VUI-with-padding
-/// builder path produces a parseable stream end-to-end. Strict-mode
-/// trailing-bit validation (a separate plan) would make pre-fix
-/// fail; until then the test guards against builder-side regressions
-/// and documents the §7.3.2.21 contract.
-#[test]
-fn vui_tail_padding_consumed_before_extension_flag() {
-    let rbsp = minimal_sps_rbsp_with_vui_tail_padding();
-    let sps = parse_sps(&rbsp).expect(
-        "SPS with VUI tail padding must parse — caller advances cursor to declared payload end",
-    );
-    // Ensure VUI itself parsed (all zero gates → no color_info, but the
-    // structural walk reached here).
-    assert_eq!(sps.color_info, None);
-}
-
 /// Construct an H.266 SPS that exercises the `walk_ref_pic_list_struct`
 /// `AbsDeltaPocSt` predicate (H.266 V4 §7.4.9 equation 150).
 ///
@@ -808,4 +765,191 @@ fn explicit_scaling_list_sps_is_rejected() {
         parse_sps(&minimal_sps_rbsp_ext(0, None, None, true)),
         Err(CodecParseError::UnsupportedProfile { profile_idc: 0 })
     ));
+}
+
+/// `sps_vui_payload_size_minus1 + 1` counts RBSP bytes (H.266 §7.4.3.4): an
+/// emulation-prevention byte inside the VUI is not payload. Four payload
+/// bytes `00 00 00 01` are coded `00 00 03 00 01`; cut the SPS's last byte
+/// and `sps_extension_flag` is missing.
+#[test]
+fn vui_payload_size_excludes_emulation_prevention_bytes() {
+    let mut rbsp = minimal_sps_rbsp_ext(0, None, Some((3, &[0x00, 0x00, 0x00, 0x01])), false);
+    let whole = parse_sps(&escape_emulation(&rbsp));
+    assert!(whole.is_ok(), "{whole:?}");
+    rbsp.truncate(rbsp.len() - 1); // the byte holding sps_extension_flag + stop bit
+    let cut = parse_sps(&escape_emulation(&rbsp));
+    assert!(
+        matches!(cut, Err(CodecParseError::TruncatedRbsp { .. })),
+        "{cut:?}"
+    );
+}
+
+/// §7.4.3.4: `sps_vui_payload_size_minus1` shall be in `0..=1023`.
+#[test]
+fn vui_payload_size_above_1023_is_rejected() {
+    let big = vec![0u8; 1025];
+    match parse_sps(&escape_emulation(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1024, &big)),
+        false,
+    ))) {
+        Err(CodecParseError::ReservedValue { field, value: 1024 }) => {
+            assert_eq!(field, "vui_payload_size_minus1")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn vui_payload_of_1024_bytes_is_accepted() {
+    let mut big = vec![0u8; 1024];
+    big[1023] = 0x01; // vui_payload_bit_equal_to_one
+    let sps = parse_sps(&escape_emulation(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1023, &big)),
+        false,
+    )));
+    assert!(sps.is_ok(), "{sps:?}");
+}
+
+/// Bits left after `vui_parameters()` end in `vui_payload_bit_equal_to_one`
+/// (H.266 §7.3.2.21): a tail of zero bytes has no marker.
+#[test]
+fn vui_tail_needs_its_marker_bit() {
+    let ok = parse_sps(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1, &[0x00, 0xFF])),
+        false,
+    ));
+    assert!(ok.is_ok(), "{ok:?}");
+    match parse_sps(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1, &[0x00, 0x00])),
+        false,
+    )) {
+        Err(CodecParseError::ReservedValue { field, value: 0 }) => {
+            assert_eq!(field, "vui_payload_bit_equal_to_one")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The VUI ends inside the last byte (11 bits used: overscan present, chroma
+/// locations present with two `ue(0)`); the five bits left are zero, so there
+/// is no marker although the last BYTE is not zero.
+#[test]
+fn vui_tail_inside_the_last_byte_needs_its_marker_bit() {
+    match parse_sps(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1, &[0b0000_0100, 0b1110_0000])),
+        false,
+    )) {
+        Err(CodecParseError::ReservedValue { field, value: 0 }) => {
+            assert_eq!(field, "vui_payload_bit_equal_to_one")
+        }
+        other => panic!("{other:?}"),
+    }
+    let ok = parse_sps(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1, &[0b0000_0100, 0b1110_1000])),
+        false,
+    ));
+    assert!(ok.is_ok(), "{ok:?}");
+}
+
+/// A VUI whose `vui_parameters()` uses every payload bit has no tail and
+/// needs no marker (`more_data_in_payload()` is false): chroma locations
+/// present, interlaced, `ue(1)` and `ue(4)` fill the second byte.
+#[test]
+fn a_vui_that_fills_its_payload_exactly_needs_no_marker() {
+    let sps = parse_sps(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((1, &[0b0000_0001, 0b0100_0101])),
+        false,
+    ))
+    .expect("a VUI without a tail");
+    assert_eq!(sps.color_info.and_then(|c| c.chroma_loc), Some(1));
+}
+
+/// A one-byte declared VUI whose colour description needs 24 more bits
+/// fails inside the VUI. It passes with or without the bound: the SPS ends
+/// right after the VUI, so an over-read runs off the RBSP as well (the test
+/// below has bytes after the SPS).
+#[test]
+fn vui_parse_is_bounded_by_its_declared_size() {
+    match parse_sps(&minimal_sps_rbsp_ext(
+        0,
+        None,
+        Some((0, &[0b0000_0010])),
+        false,
+    )) {
+        Err(CodecParseError::TruncatedRbsp { .. }) => {}
+        other => panic!("{other:?}"),
+    }
+}
+
+/// As above, with four more bytes after the SPS so that an over-read has
+/// something to read: the declared one-byte VUI is still the bound.
+#[test]
+fn vui_parse_is_bounded_even_when_bytes_follow_the_sps() {
+    let mut rbsp = minimal_sps_rbsp_ext(0, None, Some((0, &[0b0000_0010])), false);
+    rbsp.extend_from_slice(&[0x55, 0x55, 0x55, 0x55]);
+    match parse_sps(&rbsp) {
+        Err(CodecParseError::TruncatedRbsp { .. }) => {}
+        other => panic!("{other:?}"),
+    }
+}
+
+/// `sps_vui_alignment_zero_bit` shall be 0 (H.266 §7.4.3.4).
+#[test]
+fn a_non_zero_vui_alignment_bit_is_refused() {
+    let mut rbsp = minimal_sps_rbsp_ext(0, None, Some((0, &[0x00])), false);
+    // The SPS ends [.., ue(0) + alignment zeros][payload 00][extension flag +
+    // stop bit 40]; `ue(0)` is a 1, so a zero last bit in the byte before the
+    // payload is an alignment bit.
+    let n = rbsp.len();
+    assert_eq!(&rbsp[n - 2..], &[0x00, 0x40]);
+    assert_eq!(rbsp[n - 3] & 1, 0, "no alignment bit in this build");
+    assert!(parse_sps(&rbsp).is_ok());
+    rbsp[n - 3] |= 1;
+    match parse_sps(&rbsp) {
+        Err(CodecParseError::ReservedValue { field, value: 1 }) => {
+            assert_eq!(field, "sps_vui_alignment_zero_bit")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A real VUI: VVenC 1.14.0, three 320x240 frames,
+/// `-vui 1 --AspectRatioInfoPresent 1 --AspectRatioIdc 2
+/// --ColourDescriptionPresent 1 --ColourPrimaries bt709
+/// --TransferCharacteristics bt709 --MatrixCoefficients bt709
+/// --VideoFullRange 1 --ChromaLocInfoPresent 1`. The fixture is the SPS's
+/// RBSP (NAL header stripped, emulation-prevention bytes kept); its 6-byte
+/// VUI ends five bits before the payload's end, in its marker byte `F0`.
+#[test]
+fn real_vvenc_sps_with_vui_parses() {
+    let rbsp =
+        include_bytes!("../../../../tests/fixtures/codec/h266/h266_320x240_vvenc_vui_sps.bin");
+    let sps = parse_sps(rbsp).expect("real VVenC SPS with a VUI parses");
+    assert_eq!((sps.width, sps.height), (320, 240));
+    assert_eq!(sps.frame_rate, Some(Rational { num: 30, den: 1 }));
+    assert_eq!(
+        sps.color_info,
+        Some(ColorInfo {
+            primaries: ColourPrimaries::Bt709,
+            transfer: TransferCharacteristics::Bt709,
+            matrix: MatrixCoefficients::Bt709,
+            full_range: true,
+            chroma_loc: Some(0),
+            sample_aspect_ratio: Some(Rational { num: 12, den: 11 }),
+        })
+    );
 }
