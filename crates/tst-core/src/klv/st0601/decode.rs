@@ -139,6 +139,24 @@ pub fn decode_strict(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
 ///   [`crate::klv::length::read_ber_strict`] so a non-canonical encoding
 ///   anywhere inside the body trips
 ///   [`KlvDecodeError::NonCanonicalTag`] / [`KlvDecodeError::NonCanonicalLength`].
+/// - The item profile: Item 2 is 8 bytes and Item 65 one byte (a
+///   zero-length item is "unknown" and does not stand for either); an
+///   SDCC-FLP (Item 102) uses Mode 2 Parse Control (ST 0601.10-22); a
+///   Control Command (Item 115) carries no Command Time or an 8-byte one;
+///   wavelength id 0 is alone in the Active Wavelength List (Item 121,
+///   ST 0601.17-38); no Metadata Substream ID (Item 143) at the root
+///   (ST 0601.19-45).
+/// - The coded-value domains: Item 34 is 0 to 2, Item 47 0 to 63, Item 63
+///   0 to 8 (the item's Table 4; its header row says 7), Item 77 0 to 5,
+///   Item 124 has a bit set, Item 125 is 0 to 12, Item 126 0 to 6, and the
+///   four Item 81 coordinates are percentages, 0 to 100.
+///
+/// `Ok` promises these rules and nothing more: a value that breaks no
+/// listed rule but does not decode (a wrong Required Length, invalid
+/// UTF-8, an out-of-range value) is reported in
+/// [`UasDatalinkLs::field_errors`] of the returned record, as by
+/// [`decode`], so a caller that needs every item to decode checks that
+/// list too.
 ///
 /// Use this only when validating compliance against published
 /// captures or reference test vectors. Real-world captures from the
@@ -158,6 +176,9 @@ pub fn decode_strict(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
 /// - [`KlvDecodeError::NonCanonicalLength`] or
 ///   [`KlvDecodeError::NonCanonicalTag`] if any BER or BER-OID
 ///   encoding in the outer length or the body is non-canonical.
+/// - [`KlvDecodeError::ComplianceViolation`] with the item's tag and the
+///   buffer offset where it starts, for the first item that breaks the
+///   item profile or its coded-value domain.
 pub fn decode_strict_compliance(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
     // Step 1: walk the LS body strictly and record tag order WITHOUT
     // ST 0601 typed-decode. The walker uses the canonical-encoding
@@ -190,15 +211,24 @@ pub fn decode_strict_compliance(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeEr
     // truncation errors report a buf-relative offset matching the
     // permissive path.
     let body_offset_in_buf = buf.len() - after_len.len();
-    let tag_order = strict_body_walk(body, body_offset_in_buf)?;
-    if tag_order.first() != Some(&2) {
+    let items = strict_body_walk(body, body_offset_in_buf)?;
+    if items.first().map(|i| i.tag) != Some(2) {
         return Err(KlvDecodeError::Tag2NotFirst);
     }
-    if tag_order.last() != Some(&1) {
+    if items.last().map(|i| i.tag) != Some(1) {
         return Err(KlvDecodeError::Tag1NotLast);
     }
-    if !tag_order.contains(&65) {
+    if !items.iter().any(|i| i.tag == 65) {
         return Err(KlvDecodeError::MissingTag65);
+    }
+    for item in &items {
+        if let Some(reason) = profile_violation(item.tag, item.value) {
+            return Err(KlvDecodeError::ComplianceViolation {
+                tag: item.tag,
+                offset: item.offset,
+                reason,
+            });
+        }
     }
     // Step 2: delegate to existing strict decode (verifies checksum + UL
     // family). All the typed dispatch happens there. The body has
@@ -210,21 +240,33 @@ pub fn decode_strict_compliance(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeEr
     )
 }
 
+/// One item met by [`strict_body_walk`]: its tag, the buffer offset where
+/// the item starts, and its value.
+struct StrictItem<'a> {
+    tag: u32,
+    offset: usize,
+    value: &'a [u8],
+}
+
 /// Walk an ST 0601 LS body using the canonical-encoding strict BER
 /// readers, rejecting duplicate occurrences of known typed tags.
-/// Returns the in-order list of tags encountered (used by the
-/// caller for Tag 2/Tag 1/Tag 65 ordering checks).
+/// Returns the items in wire order (used by the caller for the
+/// Tag 2/Tag 1/Tag 65 ordering checks and the item profile).
 ///
 /// `body_offset_in_buf` is the offset of `body[0]` within the
-/// original outer buffer; surfaced through `DuplicateTag.offset`
-/// and `Truncated.offset` so callers can locate the violation.
+/// original outer buffer; surfaced through `DuplicateTag.offset`,
+/// `Truncated.offset` and each item's offset so callers can locate the
+/// violation.
 ///
 /// Duplicate detection is gated on `lookup(tag_u8).is_some()` —
 /// ST 0601.13-24's once-per-packet rule applies only to defined
 /// items. Unknown tags (including 2-byte BER-OID encoded tag IDs
 /// beyond the 1-byte universe) are walked but never tracked.
-fn strict_body_walk(body: &[u8], body_offset_in_buf: usize) -> Result<Vec<u32>, KlvDecodeError> {
-    let mut tag_order: Vec<u32> = Vec::new();
+fn strict_body_walk(
+    body: &[u8],
+    body_offset_in_buf: usize,
+) -> Result<Vec<StrictItem<'_>>, KlvDecodeError> {
+    let mut items: Vec<StrictItem<'_>> = Vec::new();
     let mut seen = [false; 256];
     let mut offset = 0usize;
     while offset < body.len() {
@@ -260,10 +302,65 @@ fn strict_body_walk(body: &[u8], body_offset_in_buf: usize) -> Result<Vec<u32>, 
             }
             seen[tag_u8 as usize] = true;
         }
-        tag_order.push(tag);
+        items.push(StrictItem {
+            tag,
+            offset: body_offset_in_buf + item_start,
+            value: &after_len[..len],
+        });
         offset = item_start + consumed + len;
     }
-    Ok(tag_order)
+    Ok(items)
+}
+
+/// The per-item rules of the compliance profile (ST 0601.19 and the
+/// ST 0107 rules it invokes): why `value` breaks the rule for `tag`, or
+/// `None` when it breaks none. A value too short to judge is left to the
+/// typed decode, which reports it in `field_errors`.
+pub(super) fn profile_violation(tag: u32, value: &[u8]) -> Option<&'static str> {
+    // A one-byte coded value above the item's last defined code.
+    let code_above = |max: u8, reason| (value.len() == 1 && value[0] > max).then_some(reason);
+    match tag {
+        // A zero-length item is "unknown" (ST 0107.4-16), so it does not
+        // stand for the mandatory item.
+        2 if value.len() != 8 => {
+            Some("Item 2 is the mandatory 8-byte Precision Time Stamp (ST 0601.8-09)")
+        }
+        65 if value.len() != 1 => {
+            Some("Item 65 is the mandatory 1-byte UAS Datalink LS Version Number (ST 0601.8-12)")
+        }
+        34 => code_above(2, "Icing Detected codes are 0 to 2"),
+        47 => code_above(63, "Generic Flag Data bits 6 and 7 are not defined"),
+        // The item's table gives Max 7 while its Table 4 defines code 8,
+        // "Continuous Zoom", and reserves 9 to 255: Table 4 is followed.
+        63 => code_above(8, "Sensor Field of View Name codes are 0 to 8"),
+        77 => code_above(5, "Operational Mode codes are 0 to 5"),
+        81 => value
+            .iter()
+            .take(4)
+            .any(|&pct| pct > 100)
+            .then_some("Image Horizon Pixel Pack coordinates are percentages, 0 to 100"),
+        102 => {
+            let (_, rest) = crate::klv::length::read_ber_oid_u64(value).ok()?;
+            rest.first()
+                .is_some_and(|pc| pc & 0x80 == 0)
+                .then_some("an SDCC-FLP uses Mode 2 Parse Control (ST 0601.10-22)")
+        }
+        115 => match packs::control_command_time_len(value) {
+            Some(0 | 8) | None => None,
+            Some(_) => Some("Control Command Time is 8 bytes (ST 0601.19 Table 7)"),
+        },
+        121 => {
+            let ids = packs::parse_id_list(value, 121).ok()?;
+            (ids.len() > 1 && ids.contains(&0))
+                .then_some("wavelength id 0 is the only id in its list (ST 0601.17-38)")
+        }
+        124 => (!value.is_empty() && value.iter().all(|&b| b == 0))
+            .then_some("a Positioning Method Source with no bit set is not allowed"),
+        125 => code_above(12, "Platform Status codes are 0 to 12"),
+        126 => code_above(6, "Sensor Control Mode codes are 0 to 6"),
+        143 => Some("no Metadata Substream ID at the root level (ST 0601.19-45)"),
+        _ => None,
+    }
 }
 
 fn decode_inner(

@@ -261,6 +261,15 @@ pub(crate) fn parse_control_command(bytes: &[u8]) -> Result<ControlCommand, KlvF
     })
 }
 
+/// The number of bytes after the id and the string of a raw Item 115
+/// value (its Command Time's width), `None` when the id or the string
+/// length does not parse or the string runs past the value.
+pub(crate) fn control_command_time_len(bytes: &[u8]) -> Option<usize> {
+    let (_, rest) = read_ber_oid_u64(bytes).ok()?;
+    let (str_len, rest) = read_ber(rest).ok()?;
+    rest.len().checked_sub(str_len)
+}
+
 /// Wire byte length [`emit_control_command`] would write for `cmd`,
 /// without allocating — the sizing sibling used by the Tag 115
 /// multi-instance special-case in `encode.rs`.

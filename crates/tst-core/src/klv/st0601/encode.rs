@@ -147,6 +147,13 @@ pub fn encode_to_vec_with(
 /// - [`KlvEncodeError::MissingMandatoryItem`] if `record.timestamp_us`
 ///   is `None`. `tag` will be `2` and `name` will be
 ///   `"Precision Time Stamp"`.
+/// - [`KlvEncodeError::InvalidFieldValue`] with the item's tag when the
+///   record would write an item that
+///   [`super::decode_strict_compliance`] refuses by its item profile or
+///   coded-value domains (for example wavelength id 0 beside another id,
+///   a root Metadata Substream ID, a Mode 1 SDCC-FLP, a zero Positioning
+///   Method Source, a reserved Generic Flag Data bit, a Platform Status
+///   code above 12 or an Image Horizon coordinate above 100 %).
 /// - All [`KlvEncodeError`] variants that [`encode_to_vec`] can return,
 ///   surfaced verbatim from the underlying encode path once the strict
 ///   precondition gate passes.
@@ -167,7 +174,18 @@ pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEn
     // "" encodes as [0x00].
     let mut r = record.clone();
     sanitize_strings_st0601(&mut r);
-    encode_to_vec(&r)
+    let out = encode_to_vec(&r)?;
+    // The per-item rules are the compliance decode's, judged on the bytes
+    // this encoder wrote, so the pair agrees by construction.
+    let (len, after_len) = crate::klv::length::read_ber(&out[16..])
+        .expect("the encoder writes a valid outer length");
+    for f in crate::klv::pack::Iter::local_set(&after_len[..len]) {
+        let f = f.expect("the encoder writes a valid body");
+        if let Some(reason) = super::decode::profile_violation(f.tag, f.value) {
+            return Err(KlvEncodeError::InvalidFieldValue { tag: f.tag, reason });
+        }
+    }
+    Ok(out)
 }
 
 pub fn encoded_len(record: &UasDatalinkLs) -> usize {
