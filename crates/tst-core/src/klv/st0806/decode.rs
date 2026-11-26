@@ -59,6 +59,15 @@ pub(super) const ALT_RANGE: LinearRange = LinearRange {
 /// decode, the field is unset (an earlier value does not stay); the nested
 /// sets are multi-use, each occurrence adds its entry.
 ///
+/// The encoders write the fields that are set, the sentinel entries and the
+/// `unknown` items, so a relay that decodes a set and encodes the record
+/// does not forward: an item or a nested set listed in `field_errors` (of
+/// the set, or of its Point or Area of Interest entry); and, with no entry
+/// at all, a zero-length item or nested set, every occurrence of a repeated
+/// tag but the last, an unknown tag wider than 32 bits, an item of a User
+/// Defined set other than its two, and the CRC as it was sent. A relay that
+/// must forward such a set unchanged forwards the bytes it received.
+///
 /// Tag 1 (CRC-32/MPEG-2), if present, is captured into [`RvtLs::crc32`]
 /// but **not verified**: the checksum's spec coverage is "the entire LS
 /// packet including the 16-byte UL key" (ST 0806.4 §8/Appendix), which

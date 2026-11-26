@@ -21,7 +21,11 @@ use alloc::string::{String, ToString};
 /// [`SecurityLs::field_errors`] rather than failing the whole record.
 /// Of a repeated tag the last occurrence decides: when that one is
 /// zero-length or does not decode, the field is unset (an earlier value
-/// does not stay).
+/// does not stay). The encoders write the fields that are set and the
+/// `unknown` items, so a relay that decodes a set and encodes the record
+/// does not forward an item listed in `field_errors`, a zero-length item
+/// or the earlier occurrences of a repeated tag: forward the bytes received
+/// to keep them.
 /// Use [`decode_strict`] for spec-conformance validation.
 ///
 /// # Example — sibling-layer decode from a parent ST 0601 record
