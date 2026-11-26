@@ -416,10 +416,10 @@ fn scan_sei_nal(
             }
         }
         p = payload_end; // payload_end is p + payload_size; overflow already handled above
-        // rbsp_trailing_bits: a 0x80 (or padding) terminates the walk.
-        if rbsp.get(p).is_none_or(|&b| b == 0x80) {
-            return Ok(None);
-        }
+        // The walk ends where the RBSP does. After the last message only the
+        // rbsp_trailing_bits (0x80) and zero bytes remain, which read as empty
+        // messages; a 0x80 with data after it is the payloadType byte of a
+        // message of type 128 (H.265 structure_of_pictures_info).
     }
 }
 
@@ -772,6 +772,97 @@ mod tests {
             Ok(None),
             "fewer than 16 identifier bytes = unconfirmable = Ok(None)"
         );
+    }
+
+    /// An SEI NAL unit for `codec` holding the escaped `rbsp`, then a slice.
+    fn au_with_sei_rbsp(codec: VideoCodec, rbsp: &[u8]) -> Vec<u8> {
+        let mut au = vec![0, 0, 0, 1];
+        match codec {
+            VideoCodec::H264 => au.push(0x06),
+            _ => au.extend_from_slice(&[0x4E, 0x01]),
+        }
+        append_rbsp_escaped(&mut au, rbsp);
+        match codec {
+            VideoCodec::H264 => au.extend_from_slice(&[0, 0, 0, 1, 0x65, 0xAA]),
+            _ => au.extend_from_slice(&[0, 0, 0, 1, 0x26, 0x01, 0xAA]),
+        }
+        au
+    }
+
+    /// A message of payload type 128 (H.265 `structure_of_pictures_info`,
+    /// Annex D) starts with the byte `0x80`: it is a message, not the
+    /// `rbsp_trailing_bits`. H.264 has no type 128, but the walk is the same.
+    #[test]
+    fn extract_finds_misp_after_a_type_128_message() {
+        let ts = MispTimestamp::micros(0x0102_0304_0506_0708, 0x1F);
+        for codec in [VideoCodec::H265, VideoCodec::H264] {
+            let mut rbsp = vec![0x04, 0x01, 0x55, 0x80, 0x02, 0x11, 0x22, 0x05, 28];
+            rbsp.extend_from_slice(&sei_payload(codec, &ts).unwrap());
+            rbsp.push(0x80);
+            assert_eq!(
+                extract(&au_with_sei_rbsp(codec, &rbsp), codec),
+                Ok(Some(ts)),
+                "{codec:?}"
+            );
+        }
+    }
+
+    /// `extract` walks its own NAL spans, which keep the zero bytes before
+    /// a 4-byte start code: after the stop byte they end the walk.
+    #[test]
+    fn extract_stops_at_trailing_bits_followed_by_zero_bytes() {
+        let au = [
+            0, 0, 0, 1, 0x06, 0x04, 0x01, 0x55, 0x80, 0, 0, 0, 0, 0, 1, 0x65, 0xAA,
+        ];
+        assert_eq!(extract(&au, VideoCodec::H264).unwrap(), None);
+    }
+
+    /// `80 80` after a message is junk behind the stop byte: read as a
+    /// message of type 128 whose size runs past the RBSP, it ends the walk.
+    #[test]
+    fn extract_ends_at_junk_after_the_stop_byte() {
+        for codec in [VideoCodec::H264, VideoCodec::H265] {
+            let au = au_with_sei_rbsp(codec, &[0x04, 0x01, 0x55, 0x80, 0x80]);
+            assert_eq!(extract(&au, codec), Ok(None), "{codec:?}");
+        }
+    }
+
+    /// A MISP message behind a type-128 message is read, so a malformed one
+    /// there is an error, not an absent timestamp.
+    #[test]
+    fn extract_reports_a_malformed_misp_message_after_a_type_128_message() {
+        let ts = MispTimestamp::micros(0x0102_0304_0506_0708, 0x1F);
+        for codec in [VideoCodec::H265, VideoCodec::H264] {
+            let mut payload = sei_payload(codec, &ts).unwrap();
+            payload[19] = 0x00; // the first guard byte
+            let mut rbsp = vec![0x04, 0x01, 0x55, 0x80, 0x02, 0x11, 0x22, 0x05, 28];
+            rbsp.extend_from_slice(&payload);
+            rbsp.push(0x80);
+            assert_eq!(
+                extract(&au_with_sei_rbsp(codec, &rbsp), codec),
+                Err(MispTimeExtractError::BadGuardByte),
+                "{codec:?}"
+            );
+        }
+    }
+
+    /// The walk over an SEI NAL unit is linear in its size: many messages
+    /// in front of a long run of zero bytes do not make each message look
+    /// over the whole rest of the unit.
+    #[test]
+    fn extract_with_many_messages_and_a_long_zero_tail_is_linear() {
+        let mut rbsp = Vec::new();
+        for _ in 0..200_000 {
+            rbsp.extend_from_slice(&[0x04, 0x01, 0x55]);
+        }
+        rbsp.push(0x80);
+        rbsp.resize(rbsp.len() + (1 << 20), 0x00);
+        let mut au = vec![0, 0, 0, 1, 0x06];
+        append_rbsp_escaped(&mut au, &rbsp);
+        let started = std::time::Instant::now();
+        assert_eq!(extract(&au, VideoCodec::H264), Ok(None));
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(2), "{took:?}");
     }
 
     // H.265 SUFFIX_SEI (NAL type 40) is matched by the parser.
