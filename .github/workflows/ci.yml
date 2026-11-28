@@ -2072,7 +2072,7 @@ jobs:
       # The binary, not the Docker action: a pinned check needs cargo-deny to
       # read an advisory-db clone the job moved to the pin, and the action's
       # container keeps its database in its own $CARGO_HOME.
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: cargo-deny@0.20.2
 
