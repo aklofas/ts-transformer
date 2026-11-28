@@ -337,12 +337,15 @@ impl TcpTransport {
     }
 }
 
-/// What `is_alive()` reports: live, and no cancel latched.
+/// What `is_alive()` reports, and what a call checks before it starts: live,
+/// and no cancel latched.
 ///
 /// A canceller latches the cancel before it drops liveness, and a call that
-/// sees the latch between those two stores already reports `ExplicitClose`.
-/// The latch on its own therefore reads as dead, or a caller that asks right
-/// after that call would be told the transport still lives.
+/// fails while the latch is set already reports `ExplicitClose`. The latch on
+/// its own therefore reads as dead, or a caller that asks right after that
+/// call would be told the transport still lives; and a call that starts
+/// while it is set is refused, so a transport that reads dead takes no more
+/// I/O. Liveness is read first, as in `write_loop`.
 fn reports_alive(alive: &AtomicBool, cancel: &FlagCancel) -> bool {
     alive.load(Ordering::Acquire) && !cancel.is_cancelled()
 }
@@ -454,8 +457,9 @@ fn dead_kind(cancel: &FlagCancel) -> TransportError {
 /// a hard read error) and `false` for a cancel or close.
 ///
 /// A read that fails while the cancel is latched reports the cancel, with the
-/// same read order as `write_loop` (liveness, then the latch). A read that
-/// succeeds returns its data without consulting the latch.
+/// same read order as `write_loop` (liveness, then the latch), and so does a
+/// read that has not started yet. A read that succeeds returns its data
+/// without consulting the latch.
 fn read_loop<R: FnMut(&mut [u8]) -> std::io::Result<usize>>(
     buf: &mut [u8],
     alive: &AtomicBool,
@@ -463,7 +467,7 @@ fn read_loop<R: FnMut(&mut [u8]) -> std::io::Result<usize>>(
     mut read: R,
 ) -> Result<usize, (TransportError, bool)> {
     loop {
-        if !alive.load(Ordering::Acquire) {
+        if !reports_alive(alive, cancel) {
             return Err((dead_kind(cancel), false));
         }
         match read(buf) {
@@ -517,7 +521,7 @@ fn record_recv_end(h: &EndReasonHandle, r: &Result<usize, TransportError>) {
 
 impl Transport for TcpTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
-        if !self.alive.load(Ordering::Acquire) {
+        if !reports_alive(&self.alive, &self.cancel) {
             return Err(self.dead_error());
         }
         if msg.len() > self.pkt_size {
@@ -1085,6 +1089,24 @@ mod read_loop_tests {
         }
     }
 
+    /// A read that starts with the cancel already latched (liveness dropped
+    /// or not yet) touches no socket and reports the cancel.
+    #[test]
+    fn a_read_that_starts_under_a_latched_cancel_reads_nothing() {
+        for drop_alive in [true, false] {
+            let alive = AtomicBool::new(!drop_alive);
+            let cancel = FlagCancel::new();
+            cancel.cancel();
+            let r = read_loop(&mut [0u8; 188], &alive, &cancel, |_| {
+                panic!("a cancelled transport must not read")
+            });
+            assert!(
+                matches!(r, Err((TransportError::ExplicitClose, false))),
+                "{r:?}"
+            );
+        }
+    }
+
     #[test]
     fn data_racing_a_cancel_is_returned() {
         let r = cancelled_read(|| Ok(188), true);
@@ -1137,6 +1159,30 @@ mod read_loop_tests {
         let r = cancelled_read(|| Ok(0), true).map_err(|(e, _)| e);
         record_recv_end(&h, &r);
         assert_eq!(h.get(), Some(EndReason::Cancelled));
+    }
+}
+
+#[cfg(test)]
+mod cancel_window_tests {
+    use super::TcpTransport;
+    use tst_core::transport::{RecvTransport, Transport, TransportError};
+
+    /// A canceller caught between its two stores (the latch set, liveness not
+    /// yet dropped), on a real transport: both traits read dead, and a send
+    /// that starts now reports the cancel and writes nothing.
+    #[test]
+    fn a_latched_cancel_reads_as_dead_and_refuses_a_send_loopback() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let mut t = TcpTransport::connect(&format!("tcp://127.0.0.1:{port}")).unwrap();
+        let _peer = l.accept().unwrap();
+        assert!(Transport::is_alive(&t) && RecvTransport::is_alive(&t));
+        t.cancel.cancel();
+        assert!(!Transport::is_alive(&t));
+        assert!(!RecvTransport::is_alive(&t));
+        let r = t.send_bytes(&[0x47; 188]);
+        assert!(matches!(r, Err(TransportError::ExplicitClose)), "{r:?}");
+        assert_eq!(t.stats().bytes_sent, 0);
     }
 }
 
