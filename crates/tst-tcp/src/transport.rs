@@ -1169,7 +1169,8 @@ mod cancel_window_tests {
 
     /// A canceller caught between its two stores (the latch set, liveness not
     /// yet dropped), on a real transport: both traits read dead, and a send
-    /// that starts now reports the cancel and writes nothing.
+    /// that starts now reports the cancel and writes nothing. The cancel is
+    /// judged before the message's size, as it is once liveness has dropped.
     #[test]
     fn a_latched_cancel_reads_as_dead_and_refuses_a_send_loopback() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1182,7 +1183,10 @@ mod cancel_window_tests {
         assert!(!RecvTransport::is_alive(&t));
         let r = t.send_bytes(&[0x47; 188]);
         assert!(matches!(r, Err(TransportError::ExplicitClose)), "{r:?}");
+        let r = t.send_bytes(&vec![0x47; t.pkt_size + 1]);
+        assert!(matches!(r, Err(TransportError::ExplicitClose)), "{r:?}");
         assert_eq!(t.stats().bytes_sent, 0);
+        assert_eq!(t.stats().send_errors, 0);
     }
 }
 
