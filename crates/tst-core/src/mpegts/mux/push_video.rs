@@ -251,8 +251,8 @@ impl Muxer {
     /// `tst_muxer_push_video_misp_to` — see `bindings/c/include/tstrans.h`.
     ///
     /// # Errors
-    /// - [`MuxError::MispTime`] — nano on H.264, AV1/H.266 stream, or no
-    ///   VCL NAL in `nal`.
+    /// - [`MuxError::MispTime`] — nano on H.264, a Time Status whose bits
+    ///   4 to 0 are not `11111`, AV1/H.266 stream, or no VCL NAL in `nal`.
     /// - Everything [`Self::push_video_to`] raises (`InvalidStreamHandle`,
     ///   `InvalidNal`, `BufferFull`).
     pub fn push_video_misp_to(
