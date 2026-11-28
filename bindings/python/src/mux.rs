@@ -1451,8 +1451,9 @@ impl PyMuxer {
     /// `nal` before the first VCL NAL unit.
     ///
     /// Errors:
-    /// - `MuxError(INPUT_MALFORMED)` — nano-precision on H.264, H.266/AV1
-    ///   stream, or no VCL NAL present in the access unit.
+    /// - `MuxError(MISP_TIME)` — nano-precision on H.264, a Time Status
+    ///   whose bits 4 to 0 are not `11111`, H.266/AV1 stream, or no VCL
+    ///   NAL present in the access unit.
     /// - `MuxError(INVALID_USAGE)` — invalid stream handle.
     /// - `MuxError(BACKPRESSURE)` — buffer full.
     #[allow(clippy::too_many_arguments)]

@@ -322,10 +322,10 @@ public final class Muxer extends NativeHandle {
      * @param pts      90&nbsp;kHz presentation timestamp
      * @param keyFrame whether this AU is a random-access point
      * @param misp     the MISP timestamp to splice into the SEI
-     * @throws MuxException {@code INPUT_MALFORMED} (malformed handle, or
-     *     {@link org.tstrans.codec.MispTimeKind#NANO} on H.264),
-     *     {@code INPUT_MALFORMED} (not Annex-B, or no VCL NAL), or
-     *     {@code BACKPRESSURE}.
+     * @throws MuxException {@code INVALID_USAGE} (malformed or out-of-range handle),
+     *     {@code MISP_TIME} ({@link org.tstrans.codec.MispTimeKind#NANO} on H.264, a
+     *     Time Status whose bits 4 to 0 are not {@code 11111}, or no VCL NAL),
+     *     {@code INVALID_NAL} (not Annex-B), or {@code BACKPRESSURE}.
      */
     public void pushVideoMispTo(VideoStreamHandle h, byte[] nal, long pts, boolean keyFrame,
             MispTimestamp misp) throws MuxException {
@@ -349,10 +349,10 @@ public final class Muxer extends NativeHandle {
      * @param dts      90&nbsp;kHz decode timestamp (must be &le; {@code pts})
      * @param keyFrame whether this AU is a random-access point
      * @param misp     the MISP timestamp to splice into the SEI
-     * @throws MuxException {@code INPUT_MALFORMED} (malformed handle, or
-     *     {@link org.tstrans.codec.MispTimeKind#NANO} on H.264),
-     *     {@code INPUT_MALFORMED} (not Annex-B, or no VCL NAL), or
-     *     {@code BACKPRESSURE}.
+     * @throws MuxException {@code INVALID_USAGE} (malformed or out-of-range handle),
+     *     {@code MISP_TIME} ({@link org.tstrans.codec.MispTimeKind#NANO} on H.264, a
+     *     Time Status whose bits 4 to 0 are not {@code 11111}, or no VCL NAL),
+     *     {@code INVALID_NAL} (not Annex-B), or {@code BACKPRESSURE}.
      */
     public void pushVideoMispTo(VideoStreamHandle h, byte[] nal, long pts, long dts,
             boolean keyFrame, MispTimestamp misp) throws MuxException {
