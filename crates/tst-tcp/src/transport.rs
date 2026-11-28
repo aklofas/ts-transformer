@@ -337,6 +337,16 @@ impl TcpTransport {
     }
 }
 
+/// What `is_alive()` reports: live, and no cancel latched.
+///
+/// A canceller latches the cancel before it drops liveness, and a call that
+/// sees the latch between those two stores already reports `ExplicitClose`.
+/// The latch on its own therefore reads as dead, or a caller that asks right
+/// after that call would be told the transport still lives.
+fn reports_alive(alive: &AtomicBool, cancel: &FlagCancel) -> bool {
+    alive.load(Ordering::Acquire) && !cancel.is_cancelled()
+}
+
 /// Drive a manual write loop so partial progress is observable.
 ///
 /// `Write::write_all` hides how many bytes it consumed before failing, so it
@@ -540,7 +550,7 @@ impl Transport for TcpTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        reports_alive(&self.alive, &self.cancel)
     }
 
     fn close(&mut self) {
@@ -665,7 +675,7 @@ impl RecvTransport for TcpTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        reports_alive(&self.alive, &self.cancel)
     }
 
     fn close(&mut self) {
@@ -689,7 +699,7 @@ impl RecvTransport for TcpTransport {
 
 #[cfg(test)]
 mod write_loop_tests {
-    use super::write_loop;
+    use super::{reports_alive, write_loop};
     use std::io;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tst_core::cancel::FlagCancel;
@@ -871,6 +881,25 @@ mod write_loop_tests {
             matches!(r, Err((TransportError::ExplicitClose, false))),
             "{r:?}"
         );
+    }
+
+    /// In that window `is_alive()` already reads dead, so a caller that asks
+    /// right after a call reported the cancel is not told the transport lives.
+    #[test]
+    fn a_cancel_latched_but_still_live_reads_as_dead() {
+        let alive = live();
+        let cancel = FlagCancel::new();
+        assert!(reports_alive(&alive, &cancel));
+        cancel.cancel();
+        assert!(!reports_alive(&alive, &cancel));
+    }
+
+    /// The transport's own `close()` and a terminal error drop liveness
+    /// without a cancel: dead, and not cancelled.
+    #[test]
+    fn a_dropped_liveness_flag_reads_as_dead_without_a_cancel() {
+        let alive = AtomicBool::new(false);
+        assert!(!reports_alive(&alive, &uncancelled()));
     }
 
     /// The same window with a zero-progress deadline tick reports the

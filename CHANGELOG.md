@@ -453,6 +453,10 @@ Each carries `@Deprecated(since = "0.11.0", forRemoval = true)` and works as bef
 - **A background reconnect restarts behind a full `Reject` backlog.** With `ReconnectMode::Background`, `OverflowPolicy::Reject` and a finite `max_attempts`, a give-up that left the gap buffer full made every later send return `Backpressure` without starting a new reconnect cycle, and only a new `ManagedTransport` recovered. A send that the full buffer refuses now starts the cycle. It still returns `Backpressure` for its own message, and the backlog drains once the peer is back. A `Background` send that a full `Reject` buffer refuses while the sender's cancel is latched reports the cancel (`ExplicitClose`) instead, and queues and counts nothing.
 - **A second `Sender::close()` does nothing.** It flushed again, which failed, and closed the transport a second time; it now returns at once on a sender that is closed, as drop already did.
 
+### Fixed — tst-tcp
+
+- `TcpTransport::is_alive()` reads `false` from the moment its cancel handle fires. A cancel sets its own flag and then the liveness flag; a send or receive on another thread that returned `ExplicitClose` between the two could be followed by an `is_alive()` that still read `true` for an instant. No call's result changes.
+
 ### Fixed — tst-py
 
 - **A refusal no longer deadlocks a second thread.** Two threads using one `srt.Socket` or `hls.HlsServerHandle` could deadlock when one thread's call was refused (for example `local_addr()` on a closed socket, `local_port()` after `shutdown()`) while the other called a method of the same object: the refusal built its exception, whose Python `__init__` can hand the GIL to another thread, while it held the object's internal lock. The refusal now raises after that lock is released, and so do `rtp.RtspSession.into_demux_receiver()` and `into_h264_receiver()`, which two threads can now call at once. No error kind or message changed.
