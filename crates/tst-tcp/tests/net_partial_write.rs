@@ -169,8 +169,9 @@ fn partial_write_stall_loopback_stream_stays_contiguous() {
 /// `write_loop`'s alive-check, so the test pins that check regardless of
 /// exactly how large the free burst turns out to be. Every
 /// call, parked or not, starts with the crate's own entry check
-/// (`send_bytes` returns `Closed` immediately once `alive` is false), so
-/// the loop is bounded by `cancel()` either way.
+/// (`send_bytes` returns at once on a transport that reads dead:
+/// `ExplicitClose` after a cancel), so the loop is bounded by `cancel()`
+/// either way.
 #[test]
 fn partial_write_stall_loopback_cancel_unblocks_parked_send() {
     // A 60 s stall is "never" for this test; the thread (and its handle) is
