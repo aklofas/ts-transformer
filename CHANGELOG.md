@@ -455,7 +455,7 @@ Each carries `@Deprecated(since = "0.11.0", forRemoval = true)` and works as bef
 
 ### Fixed — tst-tcp
 
-- `TcpTransport::is_alive()` reads `false` from the moment its cancel handle fires. A cancel sets its own flag and then the liveness flag; a send or receive on another thread that returned `ExplicitClose` between the two could be followed by an `is_alive()` that still read `true` for an instant. No call's result changes.
+- **`TcpTransport::is_alive()` reads `false` from the moment its cancel handle fires.** A cancel sets its own flag and then the liveness flag. A send or receive that returned `ExplicitClose` between the two could be followed by an `is_alive()` that still read `true` for an instant; and a call that started between the two could still complete. `is_alive()` now reads both flags, and a send or receive that starts once the cancel is set reports `ExplicitClose`. Nothing changes outside that instant.
 
 ### Fixed — tst-py
 
